@@ -100,9 +100,7 @@ def extract_cds_coords(db, seqid_str):
     """
 
     cds_coords = {}
-    gene_count = 0
     for gene in db.features_of_type(featuretype='gene', limit=seqid_str):
-        gene_count += 1
         if len(gene.extra) != 0:
             biotype = 'NA'
             for item in gene.extra:
@@ -240,9 +238,6 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
         if cds_dict[gene_id][tran_coord] not in transcript_coords:
             transcript_coords.append(cds_dict[gene_id][tran_coord])
             cds_dict_unique[tran_coord] = cds_dict[gene_id][tran_coord]
-
-    # print 'before', len(cds_dict[gene_id].keys())
-    # print 'after', len(cds_dict_unique.keys())
 
     gene_cds_aligns = []
 
@@ -620,7 +615,6 @@ def main():
 
     args = parser.parse_args()
 
-    gff_file = args.gff
     vcf_file = cyvcf.Reader(filename=args.vcf)
     
     chrom_region = get_seqid_str(args.ref_genome, args.chrom)
@@ -631,23 +625,25 @@ def main():
     min_depth = args.min_dp
     max_depth = args.max_dp
 
-    if os.path.isfile(gff_file[0:-3] + 'db'):
-        gff_db = gffutils.FeatureDB(gff_file[0:-3] + 'db', keep_order=True)
+    gff_file = args.gff
+    gff_str = ''
+    with open(gff_file, 'r') as gff_infile:
+        for line in gff_infile:
+            if line.startswith(args.chrom):
+                gff_str += line
+
+    if os.path.isfile(gff_file[0:-3] + args.chrom + '.' + 'db'):
+        gff_db = gffutils.FeatureDB(gff_file[0:-3] + args.chrom + '.' + 'db', keep_order=True)
     else:
-        gffutils.create_db(gff_file, gff_file[0:-3] + 'db', merge_strategy="create_unique")
-        gff_db = gffutils.FeatureDB(gff_file[0:-3] + 'db', keep_order=True)
+        gffutils.create_db(gff_str, gff_file[0:-3] + args.chrom + '.' + 'db', merge_strategy="create_unique",
+                           from_string=True)
+        gff_db = gffutils.FeatureDB(gff_file[0:-3] + args.chrom + '.' + 'db', keep_order=True)
 
     cds_coords_dict = extract_cds_coords(gff_db, chrom_region)
 
     if args.method == 2:
         longest_trans_dict = find_longest_transcript(cds_coords_dict, gff_db)
 
-    # genes = []
-    # with open('genes.txt', 'r') as infile:
-    #     for line in infile:
-    #         genes.append(line.rstrip())
-    #
-    # print(genes)
 
     with open(args.outfile, 'w', 0) as outfile:
         print('gene', 'transcript', 'chr', 'fourfold_sites', 'fourfold_S', 'theta4', 'pi4', 'TajD4', 'delta_pi4',
@@ -656,8 +652,6 @@ def main():
 
         genes_processed = 0
         for gene_cds in cds_coords_dict:
-            # if gene_cds in genes:
-            #     continue
             genes_processed += 1
             if args.method == 1:
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds, cds_coords_dict)
