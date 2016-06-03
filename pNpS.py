@@ -6,6 +6,7 @@ import os
 import cyvcf
 import numpy as np
 import argparse
+import gzip
 # import random
 
 STANDARD_CODON_TABLE = {
@@ -627,17 +628,17 @@ def main():
 
     gff_file = args.gff
     gff_str = ''
-    with open(gff_file, 'r') as gff_infile:
+    with gzip.open(gff_file, 'r') as gff_infile:
         for line in gff_infile:
             if line.startswith(args.chrom):
                 gff_str += line
 
-    if os.path.isfile(gff_file[0:-3] + args.chrom + '.' + 'db'):
-        gff_db = gffutils.FeatureDB(gff_file[0:-3] + args.chrom + '.' + 'db', keep_order=True)
+    if os.path.isfile(gff_file[0:-6] + args.chrom + '.' + 'db'):
+        gff_db = gffutils.FeatureDB(gff_file[0:-6] + args.chrom + '.' + 'db', keep_order=True)
     else:
-        gffutils.create_db(gff_str, gff_file[0:-3] + args.chrom + '.' + 'db', merge_strategy="create_unique",
+        gffutils.create_db(gff_str, gff_file[0:-6] + args.chrom + '.' + 'db', merge_strategy="create_unique",
                            from_string=True)
-        gff_db = gffutils.FeatureDB(gff_file[0:-3] + args.chrom + '.' + 'db', keep_order=True)
+        gff_db = gffutils.FeatureDB(gff_file[0:-6] + args.chrom + '.' + 'db', keep_order=True)
 
     cds_coords_dict = extract_cds_coords(gff_db, chrom_region)
 
