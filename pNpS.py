@@ -102,16 +102,7 @@ def extract_cds_coords(db, seqid_str):
 
     cds_coords = {}
     for gene in db.features_of_type(featuretype='gene', limit=seqid_str):
-        if len(gene.extra) != 0:
-            biotype = 'NA'
-            for item in gene.extra:
-                if 'gene_biotype=protein_coding' in item:
-                    biotype = 'protein_coding'
-                    break
-        else:
-            biotype = gene['gene_biotype'][0]
-
-        if biotype == 'protein_coding':
+        if gene['gene_biotype'][0] == 'protein_coding':
             gene_name = gene['ID'][0]
             gene_feat = db[gene_name]
             cds_coords[gene_name] = {}
