@@ -7,7 +7,7 @@ import cyvcf
 import numpy as np
 import argparse
 import gzip
-# import random
+
 
 STANDARD_CODON_TABLE = {
     "TTT": "F", "CTT": "L", "ATT": "I", "GTT": "V",
@@ -94,29 +94,32 @@ def extract_cds_coords(db, seqid_str):
     :param db: gff database instance
     :param seqid_str: chr:start-end
 
-    :return: dictionary with chromosome_genename as keys and each gene has a dictionary as a value
+    :return: dictionary with gene name as keys and each gene has a dictionary as a value
     containing the transcripts for that gene with the transcript id a key and the CDS
-    coordinated as a list of tuple pairs containing the start and end coordinates for
+    coordinates as a list of tuple pairs containing the start and end coordinates for
     the CDS block (start, end)
     """
 
     cds_coords = {}
     for gene in db.features_of_type(featuretype='gene', limit=seqid_str):
         if gene['gene_biotype'][0] == 'protein_coding':
+            name = gene['gene'][0]
             gene_name = gene['ID'][0]
             gene_feat = db[gene_name]
-            cds_coords[gene_name] = {}
+            cds_coords[name] = {}
 
             for i in db.children(gene_feat, featuretype='mRNA', order_by='start'):
                 transcript_name = i['ID'][0]
                 transcript_feat = db[transcript_name]
-                cds_coords[gene_name][transcript_name] = []
+                cds_coords[name][transcript_name] = []
 
                 for j in db.children(transcript_feat, featuretype='CDS', order_by='start'):
-                    cds_coords[gene_name][transcript_name].append((j.start, j.end))
+                    cds_coords[name][transcript_name].append((j.start, j.end))
 
-                cds_coords[gene_name][transcript_name].append(gene.seqid)  # add chr info
-                cds_coords[gene_name][transcript_name].append(gene.strand)  # add strand info
+                cds_coords[name][transcript_name].append(gene.seqid)  # add chr info
+                cds_coords[name][transcript_name].append(gene.strand)  # add strand info
+                cds_coords[name][transcript_name].append(gene['ID'][0])  # append id for gene
+
         else:
             continue
 
@@ -251,7 +254,7 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
         align_pos = -1
         indel_end = 0
 
-        gene_region = extract_gene(vcf, gff, gene_id)
+        gene_region = extract_gene(vcf, gff, cds_dict[gene_id][transcript][-1])
 
         if gene_region is None:  # deal with CDS on scaffolds which are returned as None
             continue
@@ -347,7 +350,7 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
                 error_message = 'Could not assign ' + problem_site + ' to site type'
                 sys.exit(error_message)
 
-        if cds_dict[gene_id][transcript][-1] == '-':  # reverse-complement when on '-' strand
+        if cds_dict[gene_id][transcript][-2] == '-':  # reverse-complement when on '-' strand
             cds_align = rc_align(cds_align)
             cds_pos_list.reverse()
 
@@ -529,18 +532,17 @@ def find_longest_transcript(cds_coord, db):
     return cds_coord_longest_tran
 
 
-# def choose_random_transcript(cds_coord, db):
-#
-#     cds_coord_random_tran = {}
-#
-#     for gene in cds_coord.keys():
-#         if len(cds_coord[gene].keys()) == 1:
-#             tran_id = cds_coord[gene].keys()[0]
-#             cds_coord_random_tran[gene + '_' + tran_id] = cds_coord[gene][tran_id]
-#             # print cds_coord_longest_tran
-#         else:
-#             random_tran = random.sample(cds_coord_random_tran[gene].keys(), 1)
-#             print cds_coord_random_tran[gene].keys(), random_tran
+def choose_transcripts_from_list(cds_coord, ortholog_dict):
+    cds_coord_from_list = {}
+
+    for gene in ortholog_dict.keys():
+        if gene in cds_coord.keys():
+            ortho_tran = ortholog_dict[gene]
+            tran_dict = dict()
+            tran_dict[ortho_tran] = cds_coord[gene][ortho_tran]
+            cds_coord_from_list[gene] = tran_dict
+
+    return cds_coord_from_list
 
 
 def calc_polystats(align):
@@ -600,12 +602,24 @@ def main():
     parser.add_argument('-c', '--chromosome', required=True, dest='chrom', type=str,
                         help="Chromosome to analyse.")
     parser.add_argument('-m', '--method', required=True, dest='method', type=int,
-                        help="Choice of transcript for degnerate sites:"
+                        help="Choice of transcript for degenerate sites:"
                              "( 1.) Longest transcript (-m 1)."
                              "( 2.) Choose method of that checks that sites are 0-fold or 4-fold degenerate across all"
-                             "transcripts (-m 2).")
+                             "transcripts (-m 2)."
+                             "( 3.) Choose longest transcript from the an ortholog list file specified")
+    parser.add_argument('-f', '--ortholog_file', dest='orthologs', type=str, help="Tabe delimited list of orthologs "
+                                                                                  "between species")
+    parser.add_argument('-s', '--species', dest='species', type=int, help="Specify the column number for the"
+                                                                          "species identifier in the ortholog list file"
+                                                                          "Required when -m 3 option is used")
 
     args = parser.parse_args()
+
+    if args.method == 3 and args.orthologs is None:
+        sys.exit("\nNeed to specify an ortholog list file with -f option\n")
+
+    if args.method == 3 and args.species is None:
+        sys.exit("\nSpecify the column number for the species identifier in the ortholog list file\n")
 
     vcf_file = cyvcf.Reader(filename=args.vcf)
     
@@ -636,9 +650,21 @@ def main():
     if args.method == 2:
         longest_trans_dict = find_longest_transcript(cds_coords_dict, gff_db)
 
+    elif args.method == 3 and args.orthologs:
+        species_col_num = args.species - 1
+        with open(args.orthologs) as infile:
+            ortholog_list_dict = {}
+            for line in infile:
+                col = line.rstrip().split(' ')
+                ortholog = col[species_col_num:species_col_num + 3]
+                ortholog_list_dict[ortholog[2].split('=')[1]] = ortholog[1]
+
+        ortho_trans_dict = choose_transcripts_from_list(cds_coords_dict, ortholog_list_dict)
+
+        #print(ortho_trans_dict)
 
     with open(args.outfile, 'w', 0) as outfile:
-        print('gene', 'transcript', 'chr', 'fourfold_sites', 'fourfold_S', 'theta4', 'pi4', 'TajD4', 'delta_pi4',
+        print('gene', 'gene_id', 'transcript', 'chr', 'fourfold_sites', 'fourfold_S', 'theta4', 'pi4', 'TajD4', 'delta_pi4',
               'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0', 'theta0_theta4', 'pi0_pi4',
               sep='\t', file=outfile)
 
@@ -653,6 +679,16 @@ def main():
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              longest_trans_dict)
                 transcript = longest_trans_dict[gene_cds].keys()[0]
+
+            elif args.method == 3:
+
+                if gene_cds not in ortho_trans_dict.keys():
+                    # print("%s not in otholog list" % gene_cds)
+                    continue
+
+                cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
+                                             ortho_trans_dict)
+                transcript = ortho_trans_dict[gene_cds].keys()[0]
 
             else:
                 sys.exit("Need to specify -m 1 or -m 2")
@@ -691,7 +727,7 @@ def main():
             else:
                 theta0_theta4 = theta0 / theta4
 
-            print(gene_cds, transcript, args.chrom, fourfold_polystats['ls'], fourfold_polystats['S'],
+            print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, args.chrom, fourfold_polystats['ls'], fourfold_polystats['S'],
                   theta4, pi4, fourfold_polystats['D'], fourfold_polystats['delta_pi'],
                   zerofold_polystats['ls'], zerofold_polystats['S'],
                   theta0, pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'],
