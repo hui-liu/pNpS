@@ -470,19 +470,19 @@ def find_longest_transcript(cds_coord, db):
                 tran_dict[longest_tran] = cds_coord[gene][longest_tran]
                 cds_coord_longest_tran[gene] = tran_dict
 
-
-
     return cds_coord_longest_tran
 
 
 def choose_transcripts_from_list(cds_coord, ortholog_dict):
     cds_coord_from_list = {}
 
-    for gene in ortholog_dict.keys():
-        if gene in cds_coord.keys():
-            ortho_tran = ortholog_dict[gene]
+    for gene in cds_coord.keys():
+        tran_id = cds_coord[gene].keys()[0]
+        gene_id = cds_coord[gene][tran_id][-1]
+        if gene_id in ortholog_dict.keys():
+            ortho_tran = ortholog_dict[gene_id]
             tran_dict = dict()
-            tran_dict[ortho_tran] = cds_coord[gene][ortho_tran]
+            tran_dict[ortho_tran] = cds_coord[gene][tran_id]
             cds_coord_from_list[gene] = tran_dict
 
     return cds_coord_from_list
@@ -590,7 +590,7 @@ def main():
 
     if args.type == 'Ensembl':
         transcript_str = 'transcript'
-    elif args.type =='NCBI':
+    elif args.type == 'NCBI':
         transcript_str = 'mRNA'
     else:
         sys.exit('Need to specify -t Ensembl or -t NCBI')
@@ -604,18 +604,25 @@ def main():
         species_col_num = args.species - 1
         with open(args.orthologs) as infile:
             ortholog_list_dict = {}
+            ortholog_num_dict = {}
             for line in infile:
                 col = line.rstrip().split(' ')
                 ortholog = col[species_col_num:species_col_num + 3]
                 ortholog_list_dict[ortholog[2].split('=')[1]] = ortholog[1]
 
+                ortholog_num_dict[ortholog[2].split('=')[1]] = col[-1]
+
         ortho_trans_dict = choose_transcripts_from_list(cds_coords_dict, ortholog_list_dict)
 
-
     with open(args.outfile, 'w', 0) as outfile:
-        print('gene', 'gene_id', 'transcript', 'chr', 'start', 'end', 'fourfold_sites', 'fourfold_S', 'theta4', 'pi4', 'TajD4', 'delta_pi4',
-              'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0', 'theta0_theta4', 'pi0_pi4',
-              sep='\t', file=outfile)
+        if args.method == 1:
+            print('gene', 'gene_id', 'transcript', 'chr', 'start', 'end', 'fourfold_sites', 'fourfold_S', 'theta4',
+                  'pi4', 'TajD4', 'delta_pi4', 'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0',
+                  'theta0_theta4', 'pi0_pi4', sep='\t', file=outfile)
+        elif args.method == 2:
+            print('gene', 'gene_id', 'transcript', 'chr', 'start', 'end', 'fourfold_sites', 'fourfold_S', 'theta4',
+                  'pi4', 'TajD4', 'delta_pi4', 'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0',
+                  'theta0_theta4', 'pi0_pi4', 'ortholog_num',  sep='\t', file=outfile)
 
         genes_processed = 0
         for gene_cds in cds_coords_dict:
@@ -636,6 +643,8 @@ def main():
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              ortho_trans_dict)
                 transcript = ortho_trans_dict[gene_cds].keys()[0]
+                gene_id = ortho_trans_dict[gene_cds][transcript][-1]
+                ortholog_num = ortholog_num_dict[gene_id]
 
             else:
                 sys.exit("Need to specify -m 1 or -m 2")
@@ -679,11 +688,18 @@ def main():
             start = gene_feat.start
             end = gene_feat.end
 
-            print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end, fourfold_polystats['ls'], fourfold_polystats['S'],
-                  theta4, pi4, fourfold_polystats['D'], fourfold_polystats['delta_pi'],
-                  zerofold_polystats['ls'], zerofold_polystats['S'],
-                  theta0, pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'],
-                  theta0_theta4, pi0_pi4, sep='\t', file=outfile)
+            if args.method == 1:
+                print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end,
+                      fourfold_polystats['ls'], fourfold_polystats['S'], theta4, pi4, fourfold_polystats['D'],
+                      fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'], theta0,
+                      pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'], theta0_theta4, pi0_pi4, sep='\t',
+                      file=outfile)
+            elif args.method == 2:
+                print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end,
+                      fourfold_polystats['ls'], fourfold_polystats['S'], theta4, pi4, fourfold_polystats['D'],
+                      fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'],
+                      theta0, pi0, zerofold_polystats['D'], zerofold_polystats['delta_pi'], theta0_theta4,
+                      pi0_pi4, ortholog_num, sep='\t', file=outfile)
 
     print("Total Protein coding Genes processed", genes_processed)
 
