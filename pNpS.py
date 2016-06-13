@@ -87,7 +87,7 @@ def find_overlapping_genes():
     pass
 
 
-def extract_cds_coords(db, seqid_str):
+def extract_cds_coords(db, seqid_str, transcript_id):
     """
     Extract the CDS coordinates for each protein in the GFF file
 
@@ -101,14 +101,24 @@ def extract_cds_coords(db, seqid_str):
     """
 
     cds_coords = {}
+
     for gene in db.features_of_type(featuretype='gene', limit=seqid_str):
-        if gene['gene_biotype'][0] == 'protein_coding':
-            name = gene['gene'][0]
-            gene_name = gene['ID'][0]
-            gene_feat = db[gene_name]
+        try:
+            gene_type = gene['gene_biotype'][0]
+        except KeyError:
+            gene_type = gene['biotype'][0] # ensembl files use biotype
+
+        if gene_type == 'protein_coding':
+            # try:
+            name = gene['ID'][0]
+            # except KeyError:
+            #     name = gene['gene_id'][0]
+
+            gene_feat = db[name]
+
             cds_coords[name] = {}
 
-            for i in db.children(gene_feat, featuretype='mRNA', order_by='start'):
+            for i in db.children(gene_feat, featuretype=transcript_id, order_by='start'):
                 transcript_name = i['ID'][0]
                 transcript_feat = db[transcript_name]
                 cds_coords[name][transcript_name] = []
@@ -118,12 +128,14 @@ def extract_cds_coords(db, seqid_str):
 
                 cds_coords[name][transcript_name].append(gene.seqid)  # add chr info
                 cds_coords[name][transcript_name].append(gene.strand)  # add strand info
-                cds_coords[name][transcript_name].append(gene['ID'][0])  # append id for gene
+                try:
+                    cds_coords[name][transcript_name].append(gene['Name'][0])  # append id for gene
+                except KeyError:
+                    cds_coords[name][transcript_name].append(gene['gene_id'][0])
 
         else:
             continue
 
-    #print(gene_count)
     return cds_coords
 
 
@@ -175,9 +187,6 @@ def call_to_bases(vcf_site, site_pos, align, sample_list):
                 base_1 = vcf_site.ALT[0]
                 base_2 = vcf_site.ALT[0]
 
-            # print(vcf_site)
-            # print(vcf_site.ALT)
-            # print(base_1, base_2)
 
             align.set(index_1, site_pos, base_1)
             align.set(index_2, site_pos, base_2)
@@ -227,16 +236,9 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
         object: list
     """
 
-    cds_dict_unique = {}  # Keep only only one of mulitple transcripts when they have exactly the same CDS coordinates
-    transcript_coords = []
-    for tran_coord in cds_dict[gene_id]:
-        if cds_dict[gene_id][tran_coord] not in transcript_coords:
-            transcript_coords.append(cds_dict[gene_id][tran_coord])
-            cds_dict_unique[tran_coord] = cds_dict[gene_id][tran_coord]
-
     gene_cds_aligns = []
 
-    for transcript in cds_dict_unique:
+    for transcript in cds_dict[gene_id]:
         cds_pos_list = []
 
         for coords in cds_dict[gene_id][transcript]:
@@ -254,7 +256,7 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
         align_pos = -1
         indel_end = 0
 
-        gene_region = extract_gene(vcf, gff, cds_dict[gene_id][transcript][-1])
+        gene_region = extract_gene(vcf, gff, gene_id)
 
         if gene_region is None:  # deal with CDS on scaffolds which are returned as None
             continue
@@ -375,7 +377,7 @@ def max_dict_val(d):
     return k[v.index(max(v))]
 
 
-def degeneracy_over_all_transcripts(cds, codon_degen_dict):
+def extract_degenerate_sites(cds, codon_degen_dict):
 
     """ Identifies the 0-fold and 4-fold sites in a codon alignment
     and returns the list of site positions in the alignment when considering
@@ -386,117 +388,55 @@ def degeneracy_over_all_transcripts(cds, codon_degen_dict):
 
      :return an Align instance containing 4-fold and an instance containing 0-fold site positions at a gene"""
 
-    fourfold_pos_lists = [[] for tran in cds]  # list for each transcript
-    zerofold_pos_lists = [[] for tran in cds]
-    twofold_pos_lists = [[] for tran in cds]
-    conflict_pos_lists = [[] for tran in cds]
-    missing_pos_lists = [[] for tran in cds]
+    fourfold_pos_list = []
+    zerofold_pos_list = []
 
-    tran_index = -1
-    # tran_num = 0
-    for transcript_cds_aln, genome_pos in cds:
-        # print genome_pos
-        # tran_num += 1
-        # print transcript_cds_aln, genome_pos[0], genome_pos[-1]
-        # transcript_cds_aln.to_fasta(fname=gene_id + '_' + str(tran_num) + '.fas')
-        tran_index += 1
-        start = 0
-        for codon_aln in transcript_cds_aln.slider(3, 3):  # take codon by codon
-            pos = genome_pos[start:start + 3]
-            sites = {0: [], 1: [], 2: []}
-            for sample in codon_aln:  # loop over samples
-                codon_seq = sample.sequence.str()
-                for i in range(3):
-                    try:
-                        sites[i].append(codon_degen_dict[codon_seq][i])
-                    except KeyError:
-                        sites[i].append('N')
+    transcript_cds_aln = cds[0][0]
+    genome_pos = cds[0][1]
+    start = 0
+    for codon_aln in transcript_cds_aln.slider(3, 3):  # take codon by codon
+        snps_per_codon = 0
+        for site in range(codon_aln.ls): # check to exclude codons with more than one snp and any codon with missing data
+            col = codon_aln.column(site, outgroup=False)
+            if 'N' in map(chr, col):
+                break
+            else:
+                if len(set(map(chr, col))) > 1:
+                    snps_per_codon += 1
 
-            # print(pos, sites)
+        if snps_per_codon > 1:
+            continue
 
-            for j in range(3):
-                if len(set(sites[j])) != 1:  # site is not completely 4-fold, 2-fold or 0-fold degenerate across samples
-                    if 'N' not in sites[j]:
-                        conflict_pos_lists[tran_index].append(pos[j])
-                    else:
-                        missing_pos_lists[tran_index].append(pos[j])
-                elif len(set(sites[j])) == 1:
-                    if sites[j][0] == 0:
-                        zerofold_pos_lists[tran_index].append(pos[j])
-                    elif sites[j][0] == 2:
-                        twofold_pos_lists[tran_index].append(pos[j])
-                    elif sites[j][0] == 4:
-                        fourfold_pos_lists[tran_index].append(pos[j])
-                    elif sites[j][0] == 'N':
-                        missing_pos_lists[tran_index].append(pos[j])  # missing data or conflicting degeneracy
+        pos = genome_pos[start:start + 3]
+        sites = {0: [], 1: [], 2: []}
+        for sample in codon_aln:  # loop over samples
+            codon_seq = sample.sequence.str()
+            for i in range(3):
+                try:
+                    sites[i].append(codon_degen_dict[codon_seq][i])
+                except KeyError:
+                    sites[i].append('N')
 
-            start += 3
+        # print(pos, sites)
 
-        # print '0fd:', zerofold_pos_lists
-        # print '2fd:', twofold_pos_lists
-        # print '4fd:', fourfold_pos_lists
-        # print 'Xfd:', conflict_pos_lists
-        # print 'Nfd:', missing_pos_lists
+        for j in range(3):
+            if len(set(sites[j])) == 1:  # site is not completely 4-fold, 2-fold or 0-fold degenerate across samples
+                if sites[j][0] == 0:
+                    zerofold_pos_list.append(pos[j])
+                elif sites[j][0] == 4:
+                    fourfold_pos_list.append(pos[j])
+                else:
+                    continue
+            else:
+                continue
 
-    if len(cds) > 1:
-        zerofold_sites = []
-        fourfold_sites = []
-        other_sites = []
+        start += 3
 
-        for zero_site in zerofold_pos_lists:
-            zerofold_sites += zero_site
+    fourfold_sites_to_extract_index = [cds[0][1].index(i) for i in fourfold_pos_list]
+    four_fold_align = cds[0][0].extract(fourfold_sites_to_extract_index)
 
-        for four_site in fourfold_pos_lists:
-            fourfold_sites += four_site
-
-        for two_site in twofold_pos_lists:
-            other_sites += two_site
-
-        for conflict_site in conflict_pos_lists:
-            other_sites += conflict_site
-
-        for missing_site in missing_pos_lists:
-            other_sites += missing_site
-
-        fourfold_pos_filtered = set(fourfold_sites).difference(set(zerofold_sites + other_sites))
-        zerofold_pos_filtered = set(zerofold_sites).difference(set(fourfold_sites + other_sites))
-
-        # print len(fourfold_pos_filtered), len(zerofold_pos_filtered)
-
-        fourfold_align_list = []
-        zerofold_align_list = []
-
-        for cds_align, genome_pos in cds:
-                fourfold_sites_to_extract = fourfold_pos_filtered.intersection(set(genome_pos))
-                fourfold_sites_to_extract_index = [genome_pos.index(i) for i in list(fourfold_sites_to_extract)]
-                fourfold_aln = cds_align.extract(fourfold_sites_to_extract_index)
-                fourfold_align_list.append(fourfold_aln)
-                fourfold_pos_filtered = fourfold_pos_filtered - fourfold_sites_to_extract
-
-                zerofold_sites_to_extract = zerofold_pos_filtered.intersection(set(genome_pos))
-                zerofold_sites_to_extract_index = [genome_pos.index(i) for i in list(zerofold_sites_to_extract)]
-                zerofold_aln = cds_align.extract(zerofold_sites_to_extract_index)
-                zerofold_align_list.append(zerofold_aln)
-                zerofold_pos_filtered = zerofold_pos_filtered - zerofold_sites_to_extract
-
-        four_fold_align = egglib.tools.concat(*fourfold_align_list)
-        zero_fold_align = egglib.tools.concat(*zerofold_align_list)
-
-        # print four_fold_align.ls, zero_fold_align.ls
-
-    else:
-
-        fourfold_pos_filtered = fourfold_pos_lists[0]
-
-        fourfold_sites_to_extract_index = [cds[0][1].index(i) for i in fourfold_pos_filtered]
-        four_fold_align = cds[0][0].extract(fourfold_sites_to_extract_index)
-
-        zerofold_pos_filtered = zerofold_pos_lists[0]
-        zerofold_sites_to_extract_index = [cds[0][1].index(i) for i in zerofold_pos_filtered]
-        zero_fold_align = cds[0][0].extract(zerofold_sites_to_extract_index)
-
-        # print len(fourfold_pos_filtered), len(zerofold_pos_filtered)
-        # print four_fold_align.ls, zero_fold_align.ls
+    zerofold_sites_to_extract_index = [cds[0][1].index(i) for i in zerofold_pos_list]
+    zero_fold_align = cds[0][0].extract(zerofold_sites_to_extract_index)
 
     return four_fold_align, zero_fold_align
 
@@ -509,12 +449,13 @@ def find_longest_transcript(cds_coord, db):
     cds_coord_longest_tran = {}
 
     for gene in cds_coord.keys():
+
         if len(cds_coord[gene].keys()) == 1:
             tran_id = cds_coord[gene].keys()[0]
             tran_dict = dict()
             tran_dict[tran_id] = cds_coord[gene][tran_id]
             cds_coord_longest_tran[gene] = tran_dict
-            # print cds_coord_longest_tran
+
         else:
             tran_len_dict = {}
             for tran_id in cds_coord[gene].keys():
@@ -528,6 +469,8 @@ def find_longest_transcript(cds_coord, db):
                 tran_dict = dict()
                 tran_dict[longest_tran] = cds_coord[gene][longest_tran]
                 cds_coord_longest_tran[gene] = tran_dict
+
+
 
     return cds_coord_longest_tran
 
@@ -593,6 +536,7 @@ def main():
     parser.add_argument('-i', '--in', dest='vcf', required=True, help="All-sites VCF file produced by GATK "
                                                                       "GenotypeGVCF")
     parser.add_argument('-g', '--gff', dest='gff', help="Reference genome annotation file in GFF3 format")
+    parser.add_argument('-t', '--type_gff', dest='type', help="Specify whether GFF is Ensembl or NCBI")
     parser.add_argument('-r', '--ref_genome', dest='ref_genome', help="Reference Genome in fasta format")
     parser.add_argument('-o', '--out', required=True, dest='outfile', help="Outfile to write results")
     parser.add_argument('-d', '--min_mean_dp', required=True, dest='min_dp', type=int,
@@ -604,14 +548,13 @@ def main():
     parser.add_argument('-m', '--method', required=True, dest='method', type=int,
                         help="Choice of transcript for degenerate sites:"
                              "( 1.) Longest transcript (-m 1)."
-                             "( 2.) Choose method of that checks that sites are 0-fold or 4-fold degenerate across all"
-                             "transcripts (-m 2)."
-                             "( 3.) Choose longest transcript from the an ortholog list file specified")
+                             "( 2.) Choose transcript from the an ortholog list file specified")
     parser.add_argument('-f', '--ortholog_file', dest='orthologs', type=str, help="Tabe delimited list of orthologs "
                                                                                   "between species")
     parser.add_argument('-s', '--species', dest='species', type=int, help="Specify the column number for the"
                                                                           "species identifier in the ortholog list file"
-                                                                          "Required when -m 3 option is used")
+                                                                          "Required when -m 2 option is used")
+
 
     args = parser.parse_args()
 
@@ -622,7 +565,7 @@ def main():
         sys.exit("\nSpecify the column number for the species identifier in the ortholog list file\n")
 
     vcf_file = cyvcf.Reader(filename=args.vcf)
-    
+
     chrom_region = get_seqid_str(args.ref_genome, args.chrom)
     codon_degen_dict = get_degeneracy(STANDARD_CODON_TABLE)
 
@@ -645,12 +588,19 @@ def main():
                            from_string=True)
         gff_db = gffutils.FeatureDB(gff_file[0:-6] + args.chrom + '.' + 'db', keep_order=True)
 
-    cds_coords_dict = extract_cds_coords(gff_db, chrom_region)
+    if args.type == 'Ensembl':
+        transcript_str = 'transcript'
+    elif args.type =='NCBI':
+        transcript_str = 'mRNA'
+    else:
+        sys.exit('Need to specify -t Ensembl or -t NCBI')
 
-    if args.method == 2:
+    cds_coords_dict = extract_cds_coords(gff_db, chrom_region, transcript_str)
+
+    if args.method == 1:
         longest_trans_dict = find_longest_transcript(cds_coords_dict, gff_db)
 
-    elif args.method == 3 and args.orthologs:
+    elif args.method == 2 and args.orthologs:
         species_col_num = args.species - 1
         with open(args.orthologs) as infile:
             ortholog_list_dict = {}
@@ -661,26 +611,23 @@ def main():
 
         ortho_trans_dict = choose_transcripts_from_list(cds_coords_dict, ortholog_list_dict)
 
-        #print(ortho_trans_dict)
 
     with open(args.outfile, 'w', 0) as outfile:
-        print('gene', 'gene_id', 'transcript', 'chr', 'fourfold_sites', 'fourfold_S', 'theta4', 'pi4', 'TajD4', 'delta_pi4',
+        print('gene', 'gene_id', 'transcript', 'chr', 'start', 'end', 'fourfold_sites', 'fourfold_S', 'theta4', 'pi4', 'TajD4', 'delta_pi4',
               'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0', 'theta0_theta4', 'pi0_pi4',
               sep='\t', file=outfile)
 
         genes_processed = 0
         for gene_cds in cds_coords_dict:
             genes_processed += 1
-            if args.method == 1:
-                cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds, cds_coords_dict)
-                transcript = 'NA'
 
-            elif args.method == 2:
+            if args.method == 1:
+
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              longest_trans_dict)
                 transcript = longest_trans_dict[gene_cds].keys()[0]
 
-            elif args.method == 3:
+            elif args.method == 2:
 
                 if gene_cds not in ortho_trans_dict.keys():
                     # print("%s not in otholog list" % gene_cds)
@@ -696,7 +643,7 @@ def main():
             if cds_alns is None:
                 continue
 
-            alns = degeneracy_over_all_transcripts(cds_alns, codon_degen_dict)
+            alns = extract_degenerate_sites(cds_alns, codon_degen_dict)
 
             fourfold_polystats = calc_polystats(alns[0])
             zerofold_polystats = calc_polystats(alns[1])
@@ -727,7 +674,12 @@ def main():
             else:
                 theta0_theta4 = theta0 / theta4
 
-            print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, args.chrom, fourfold_polystats['ls'], fourfold_polystats['S'],
+            gene_feat = gff_db[gene_cds]
+            chrom = gene_feat.seqid
+            start = gene_feat.start
+            end = gene_feat.end
+
+            print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end, fourfold_polystats['ls'], fourfold_polystats['S'],
                   theta4, pi4, fourfold_polystats['D'], fourfold_polystats['delta_pi'],
                   zerofold_polystats['ls'], zerofold_polystats['S'],
                   theta0, pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'],
