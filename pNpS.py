@@ -69,22 +69,17 @@ def get_seqid_str(ref_genome, chrom):
 
     seqid_str = None
 
+    seq = egglib.Align()
+
     with egglib.io.fasta_iter(ref_genome) as f:
         for item in f:
             if item.name == chrom:
+                seq.add_sample(item.name, item.sequence.str())
                 length = item.ls
                 seqid_str = chrom + ':1-%s' % length
                 break
 
-    return seqid_str
-
-
-def find_overlapping_genes():
-    """
-    Use pybedtools intersect to get list of overlapping genes.
-
-    """
-    pass
+    return seqid_str, seq
 
 
 def extract_cds_coords(db, seqid_str, transcript_id):
@@ -137,6 +132,30 @@ def extract_cds_coords(db, seqid_str, transcript_id):
             continue
 
     return cds_coords
+
+
+def extract_ref_cds(chrom_seq, cds_coords):
+    """
+    Extract the CDS sequence for a gene transcript from the reference sequence
+
+    :param chrom_seq:
+    :param cds_coords:
+    :return: CDS Align instance
+    """
+
+    cds_pos_list = []
+    for coords in cds_coords:
+        if type(coords) is tuple:
+            cds_pos_list += range(coords[0], coords[1] + 1)
+
+    cds_pos_list_zero = [site - 1 for site in cds_pos_list]
+
+    cds_ref_seq = chrom_seq.extract(cds_pos_list_zero)
+
+    if cds_coords[-2] == '-':
+        cds_ref_seq = rc_align(cds_ref_seq)
+
+    return cds_ref_seq
 
 
 def extract_gene(vcf, gff, gene_name):
@@ -215,20 +234,32 @@ def rc_align(align):
     return align
 
 
-def find_prem_stop(cds_align):
+def find_prem_stop(cds_ref_seq, gene_id, tran_id):
+
     """Detect if there is a premature stop codon in a cds alignment"""
 
-    if egglib.tools.has_stop(cds_align):
+    cds_ref_seq_nostop = cds_ref_seq.extract(0, cds_ref_seq.ls - 3)
+
+    if egglib.tools.has_stop(cds_ref_seq_nostop):
+        print('Premature stop codon detected  gene: %s transcript: %s' % (gene_id, tran_id))
         return True
     else:
         return False
 
-    # for codon in egglib.tools.iter_stops(cds_align):  # check for premature stop codons
-    #     if codon[1] < cds_align.ls - 3:
-    #
-    #         return True
-    #     else:
-    #         return False
+
+def check_cds_incomplete(cds_ref_seq, gene_id, tran_id):
+
+    stop_list = ['TGA', 'TAA', 'TAG']
+
+    cds_seq = egglib.SequenceView(cds_ref_seq, 0, outgroup=False).str()
+
+    print(cds_seq[0:3], cds_seq[-3:])
+
+    if cds_seq[0:3] != 'ATG' or cds_seq[-3:] not in stop_list:
+        print('No start, or no stop, codon detected gene: %s transcript: %s' % (gene_id, tran_id))
+        return True
+    else:
+        return False
 
 
 def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict, filtered=True):
@@ -242,137 +273,139 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
 
     gene_cds_aligns = []
 
-    for transcript in cds_dict[gene_id]:
-        cds_pos_list = []
+    #for transcript in cds_dict[gene_id]:
+    transcript = cds_dict[gene_id].keys()[0]
+    cds_pos_list = []
 
-        for coords in cds_dict[gene_id][transcript]:
-            if type(coords) is tuple:
-                cds_pos_list += range(coords[0], coords[1] + 1)
+    for coords in cds_dict[gene_id][transcript]:
+        if type(coords) is tuple:
+            cds_pos_list += range(coords[0], coords[1] + 1)
 
-        len_bp = len(cds_pos_list)
-        cds_align = egglib.Align(nsit=len_bp)
+    len_bp = len(cds_pos_list)
+    cds_align = egglib.Align(nsit=len_bp)
 
-        for sample in sample_list:
+    for sample in sample_list:
 
-            cds_align.add_sample(sample + '_1', data='N'*len_bp)
-            cds_align.add_sample(sample + '_2', data='N'*len_bp)
+        cds_align.add_sample(sample + '_1', data='N'*len_bp)
+        cds_align.add_sample(sample + '_2', data='N'*len_bp)
 
-        align_pos = -1
-        indel_end = 0
+    align_pos = -1
+    indel_end = 0
 
-        gene_region = extract_gene(vcf, gff, gene_id)
+    gene_region = extract_gene(vcf, gff, gene_id)
 
-        if gene_region is None:  # deal with CDS on scaffolds which are returned as None
+    # if gene_region is None:  # deal with CDS on scaffolds which are returned as None
+    #     continue
+
+    for site in gene_region:
+
+        if site.POS not in cds_pos_list:  # only extract genic sites in CDS blocks
             continue
 
-        for site in gene_region:
+        align_pos += 1
 
-            if site.POS not in cds_pos_list:  # only extract genic sites in CDS blocks
+        if site.REF == 'N':
+            # ref_N += 1
+            continue
+
+        if site.is_indel and site.aaf != 0.0:
+            if len(site.REF) > len(site.ALT):
+                indel_end = site.POS + len(site.REF) - 1
                 continue
-
-            align_pos += 1
-
-            if site.REF == 'N':
-                # ref_N += 1
-                continue
-
-            if site.is_indel and site.aaf != 0.0:
-                if len(site.REF) > len(site.ALT):
-                    indel_end = site.POS + len(site.REF) - 1
-                    continue
-                # indels += 1
-                else:
-                    continue
-
-            if len(site.ALT) >= 1 and site.ALT[-1] == '*':  # SNPs at spanning deletion
-                # spanning_deletion += 1
-                continue
-
-            all_dp = [x['DP'] for x in site.samples]  # get the genotype depths
-
-            if None in all_dp:  # Exclude sites where a genotype DP field is set to '.'
-                # low_call_rate += 1
-                continue
-
-            mean_dp = np.mean(all_dp)
-
-            if mean_dp < min_dp or mean_dp > max_dp:  # depth filter
-                # extreme_depth += 1
-                continue
-
-            if 0 in all_dp or site.call_rate < 1.0:  # only consider sites where all samples have coverage
-                # low_call_rate += 1
-                continue
-
-            if site.FILTER is not None:
-                if site.FILTER == "REPEAT" or "REPEAT" in site.FILTER:  # exclude sites in repeat regions
-                    # repeat_sites += 1
-                    continue
-
-            if site.is_monomorphic:
-                if site.POS > indel_end:
-                    call_to_bases(site, align_pos, cds_align, sample_list)
-                    indel_end = 0
-                    continue
-                else:
-                    continue
-
-            if site.is_indel and site.aaf == 0.0:
-                if site.POS > indel_end:
-                    call_to_bases(site, align_pos, cds_align, sample_list)
-                    indel_end = 0
-                    # valid_sites += 1
-                    continue
-                else:
-                    continue
-
-            if site.is_snp:
-
-                if len(site.ALT) > 1:
-                    # multiallelic_snp += 1
-                    continue
-
-                if site.aaf == 1.0 or site.aaf == 0.0:  # only want SNPs polymorphic in our sample
-                    if site.POS > indel_end:
-                        call_to_bases(site, align_pos, cds_align, sample_list)
-                        continue
-                    else:
-                        continue
-
-                if filtered:
-                    if site.FILTER == 'PASS' and site.POS > indel_end:
-                        call_to_bases(site, align_pos, cds_align, sample_list)
-                        continue
-                    else:
-                        # failed_snp += 1
-                        continue
-                else:
-                    if site.POS > indel_end:
-                        call_to_bases(site, align_pos, cds_align, sample_list)
-                    else:
-                        continue
+            # indels += 1
             else:
-                problem_site = site.CHROM + '\t' + str(site.POS)
-                error_message = 'Could not assign ' + problem_site + ' to site type'
-                sys.exit(error_message)
+                continue
 
-        if cds_dict[gene_id][transcript][-2] == '-':  # reverse-complement when on '-' strand
-            cds_align = rc_align(cds_align)
-            cds_pos_list.reverse()
-
-        cds_align_nostop = cds_align.extract(0, cds_align.ls - 3) # drop the stop codon at the end
-
-        if find_prem_stop(cds_align_nostop):
-            print('Premature stop detected in CDS ', 'gene:', gene_id, 'transcript:', transcript)
-            #cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
+        if len(site.ALT) >= 1 and site.ALT[-1] == '*':  # SNPs at spanning deletion
+            # spanning_deletion += 1
             continue
-        elif cds_align.ls % 3 != 0:
-            print('CDS not a multiple of 3 ', 'gene:', gene_id, 'transcript:', transcript)
-            #cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
+
+        all_dp = [x['DP'] for x in site.samples]  # get the genotype depths
+
+        if None in all_dp:  # Exclude sites where a genotype DP field is set to '.'
+            # low_call_rate += 1
             continue
+
+        mean_dp = np.mean(all_dp)
+
+        if mean_dp < min_dp or mean_dp > max_dp:  # depth filter
+            # extreme_depth += 1
+            continue
+
+        if 0 in all_dp or site.call_rate < 1.0:  # only consider sites where all samples have coverage
+            # low_call_rate += 1
+            continue
+
+        if site.FILTER is not None:
+            if site.FILTER == "REPEAT" or "REPEAT" in site.FILTER:  # exclude sites in repeat regions
+                # repeat_sites += 1
+                continue
+
+        if site.is_monomorphic:
+            if site.POS > indel_end:
+                call_to_bases(site, align_pos, cds_align, sample_list)
+                indel_end = 0
+                continue
+            else:
+                continue
+
+        if site.is_indel and site.aaf == 0.0:
+            if site.POS > indel_end:
+                call_to_bases(site, align_pos, cds_align, sample_list)
+                indel_end = 0
+                # valid_sites += 1
+                continue
+            else:
+                continue
+
+        if site.is_snp:
+
+            if len(site.ALT) > 1:
+                # multiallelic_snp += 1
+                continue
+
+            if site.aaf == 1.0 or site.aaf == 0.0:  # only want SNPs polymorphic in our sample
+                if site.POS > indel_end:
+                    call_to_bases(site, align_pos, cds_align, sample_list)
+                    continue
+                else:
+                    continue
+
+            if filtered:
+                if site.FILTER == 'PASS' and site.POS > indel_end:
+                    call_to_bases(site, align_pos, cds_align, sample_list)
+                    continue
+                else:
+                    # failed_snp += 1
+                    continue
+            else:
+                if site.POS > indel_end:
+                    call_to_bases(site, align_pos, cds_align, sample_list)
+                else:
+                    continue
         else:
-            gene_cds_aligns.append((cds_align_nostop, cds_pos_list[0:-3]))
-        # cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
+            problem_site = site.CHROM + '\t' + str(site.POS)
+            error_message = 'Could not assign ' + problem_site + ' to site type'
+            sys.exit(error_message)
+
+    if cds_dict[gene_id][transcript][-2] == '-':  # reverse-complement when on '-' strand
+        cds_align = rc_align(cds_align)
+        cds_pos_list.reverse()
+
+    cds_align_nostop = cds_align.extract(0, cds_align.ls - 3)  # drop the stop codon at the end
+
+    # if find_prem_stop(cds_align_nostop):
+    #     print('Premature stop detected in CDS ', 'gene:', gene_id, 'transcript:', transcript)
+    #     #cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
+    #     continue
+    # elif cds_align.ls % 3 != 0:
+    #     print('CDS not a multiple of 3 ', 'gene:', gene_id, 'transcript:', transcript)
+    #     #cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
+    #     continue
+    # else:
+
+    gene_cds_aligns.append((cds_align_nostop, cds_pos_list[0:-3]))
+    # cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
 
     if len(gene_cds_aligns) == 0:
         return None
@@ -562,7 +595,6 @@ def main():
                                                                           "species identifier in the ortholog list file"
                                                                           "Required when -m 2 option is used")
 
-
     args = parser.parse_args()
 
     if args.method == 3 and args.orthologs is None:
@@ -573,7 +605,11 @@ def main():
 
     vcf_file = cyvcf.Reader(filename=args.vcf)
 
-    chrom_region = get_seqid_str(args.ref_genome, args.chrom)
+    chrom = get_seqid_str(args.ref_genome, args.chrom)
+
+    chrom_region = chrom[0]
+    chrom_seq = chrom[1]
+
     codon_degen_dict = get_degeneracy(STANDARD_CODON_TABLE)
 
     samples = vcf_file.samples
@@ -638,9 +674,22 @@ def main():
 
             if args.method == 1:
 
+                transcript = longest_trans_dict[gene_cds].keys()[0]
+
+                cds_ref_seq = extract_ref_cds(chrom_seq, longest_trans_dict[
+                    gene_cds][transcript])
+
+                if check_cds_incomplete(cds_ref_seq, gene_cds,
+                                        transcript):  # check CDS has valid start codon and stop codon
+                    cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
+                    continue
+
+                if find_prem_stop(cds_ref_seq, gene_cds, transcript):  # check for premature stop
+                    cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
+                    continue
+
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              longest_trans_dict)
-                transcript = longest_trans_dict[gene_cds].keys()[0]
 
             elif args.method == 2:
 
@@ -648,9 +697,20 @@ def main():
                     # print("%s not in otholog list" % gene_cds)
                     continue
 
+                transcript = ortho_trans_dict[gene_cds].keys()[0]
+                cds_ref_seq = extract_ref_cds(chrom_seq, transcript)
+
+                if check_cds_incomplete(cds_ref_seq, gene_cds, transcript):
+                    # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
+                    continue
+
+                if find_prem_stop(cds_ref_seq, gene_cds, transcript):
+                    # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
+                    continue
+
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              ortho_trans_dict)
-                transcript = ortho_trans_dict[gene_cds].keys()[0]
+
                 gene_id = ortho_trans_dict[gene_cds][transcript][-1]
                 ortholog_num = ortholog_num_dict[gene_id]
 
