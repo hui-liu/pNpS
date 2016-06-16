@@ -253,8 +253,6 @@ def check_cds_incomplete(cds_ref_seq, gene_id, tran_id):
 
     cds_seq = egglib.SequenceView(cds_ref_seq, 0, outgroup=False).str()
 
-    print(cds_seq[0:3], cds_seq[-3:])
-
     if cds_seq[0:3] != 'ATG' or cds_seq[-3:] not in stop_list:
         print('No start, or no stop, codon detected gene: %s transcript: %s' % (gene_id, tran_id))
         return True
@@ -407,10 +405,12 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
     gene_cds_aligns.append((cds_align_nostop, cds_pos_list[0:-3]))
     # cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
 
-    if len(gene_cds_aligns) == 0:
-        return None
-    else:
-        return gene_cds_aligns
+    # if len(gene_cds_aligns) == 0:
+    #     return None
+    # else:
+    #     return gene_cds_aligns
+
+    return cds_align_nostop, cds_pos_list[0:-3]
 
 
 def max_dict_val(d):
@@ -434,8 +434,8 @@ def extract_degenerate_sites(cds, codon_degen_dict):
     fourfold_pos_list = []
     zerofold_pos_list = []
 
-    transcript_cds_aln = cds[0][0]
-    genome_pos = cds[0][1]
+    transcript_cds_aln = cds[0]
+    genome_pos = cds[1]
     start = 0
     for codon_aln in transcript_cds_aln.slider(3, 3):  # take codon by codon
         codon_pol = calc_polystats(codon_aln)
@@ -472,11 +472,11 @@ def extract_degenerate_sites(cds, codon_degen_dict):
 
         start += 3
 
-    fourfold_sites_to_extract_index = [cds[0][1].index(i) for i in fourfold_pos_list]
-    four_fold_align = cds[0][0].extract(fourfold_sites_to_extract_index)
+    fourfold_sites_to_extract_index = [cds[1].index(i) for i in fourfold_pos_list]
+    four_fold_align = cds[0].extract(fourfold_sites_to_extract_index)
 
-    zerofold_sites_to_extract_index = [cds[0][1].index(i) for i in zerofold_pos_list]
-    zero_fold_align = cds[0][0].extract(zerofold_sites_to_extract_index)
+    zerofold_sites_to_extract_index = [cds[1].index(i) for i in zerofold_pos_list]
+    zero_fold_align = cds[0].extract(zerofold_sites_to_extract_index)
 
     return four_fold_align, zero_fold_align
 
@@ -567,6 +567,26 @@ def calc_delta_pi(pol_stats, n):
         delta_pi = 'NA'
 
     return delta_pi
+
+
+def calc_sfs(aln):
+
+    """ Calculated the folded sfs for an alignment
+
+    The sfs is returned as a list and also contains the counts of monomorphic
+    sites as the first element"""
+
+    sfs_folded = [0 for i in range(int(aln.ns / 2) + 1)]
+    for site_index in range(aln.ls):
+        site_freq = egglib.stats.SiteFrequency.make_from_dataset(aln, site_index)
+        allele_freq = site_freq.freqs(no_pop=True)
+        if len(allele_freq) == 1:
+            sfs_folded[0] += 1
+        else:
+            minor_allele_freq = min(allele_freq)
+            sfs_folded[minor_allele_freq] += 1
+
+    return sfs_folded
 
 
 def main():
@@ -662,11 +682,11 @@ def main():
         if args.method == 1:
             print('gene', 'gene_id', 'transcript', 'chr', 'start', 'end', 'fourfold_sites', 'fourfold_S', 'theta4',
                   'pi4', 'TajD4', 'delta_pi4', 'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0',
-                  'theta0_theta4', 'pi0_pi4', sep='\t', file=outfile)
+                  'theta0_theta4', 'pi0_pi4', 'fourfold_sfs', 'zerofold_sfs', sep='\t', file=outfile)
         elif args.method == 2:
             print('gene', 'gene_id', 'transcript', 'chr', 'start', 'end', 'fourfold_sites', 'fourfold_S', 'theta4',
                   'pi4', 'TajD4', 'delta_pi4', 'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0',
-                  'theta0_theta4', 'pi0_pi4', 'ortholog_num',  sep='\t', file=outfile)
+                  'theta0_theta4', 'pi0_pi4', 'fourfold_sfs', 'zerofold_sfs', 'ortholog_num',  sep='\t', file=outfile)
 
         genes_processed = 0
         for gene_cds in cds_coords_dict:
@@ -681,15 +701,17 @@ def main():
 
                 if check_cds_incomplete(cds_ref_seq, gene_cds,
                                         transcript):  # check CDS has valid start codon and stop codon
-                    cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
+                    # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
                     continue
 
                 if find_prem_stop(cds_ref_seq, gene_cds, transcript):  # check for premature stop
-                    cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
+                    # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
                     continue
 
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              longest_trans_dict)
+
+                # cds_alns[0].to_fasta('%s_%s.fas' % (gene_cds, transcript))
 
             elif args.method == 2:
 
@@ -717,9 +739,6 @@ def main():
             else:
                 sys.exit("Need to specify -m 1 or -m 2")
 
-            if cds_alns is None:
-                continue
-
             alns = extract_degenerate_sites(cds_alns, codon_degen_dict)
 
             fourfold_polystats = calc_polystats(alns[0])
@@ -728,6 +747,9 @@ def main():
             if fourfold_polystats['ls'] is None or zerofold_polystats['ls'] is None:
                 print('No called sites in', gene_cds)
                 continue
+
+            fourfold_sfs_str = ','.join(str(s) for s in calc_sfs(alns[0]))
+            zerofold_sfs_str = ','.join(str(s) for s in calc_sfs(alns[1]))
 
             if fourfold_polystats['D'] is None:
                 fourfold_polystats['D'] = 'NA'
@@ -760,14 +782,14 @@ def main():
                 print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end,
                       fourfold_polystats['ls'], fourfold_polystats['S'], theta4, pi4, fourfold_polystats['D'],
                       fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'], theta0,
-                      pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'], theta0_theta4, pi0_pi4, sep='\t',
-                      file=outfile)
+                      pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'], theta0_theta4, pi0_pi4,
+                      fourfold_sfs_str, zerofold_sfs_str, sep='\t', file=outfile)
             elif args.method == 2:
                 print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end,
                       fourfold_polystats['ls'], fourfold_polystats['S'], theta4, pi4, fourfold_polystats['D'],
                       fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'],
                       theta0, pi0, zerofold_polystats['D'], zerofold_polystats['delta_pi'], theta0_theta4,
-                      pi0_pi4, ortholog_num, sep='\t', file=outfile)
+                      pi0_pi4, fourfold_sfs_str, zerofold_sfs_str, ortholog_num, sep='\t', file=outfile)
 
     print("Total Protein coding Genes processed", genes_processed)
 
