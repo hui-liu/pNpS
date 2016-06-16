@@ -187,7 +187,6 @@ def call_to_bases(vcf_site, site_pos, align, sample_list):
                 base_1 = vcf_site.ALT[0]
                 base_2 = vcf_site.ALT[0]
 
-
             align.set(index_1, site_pos, base_1)
             align.set(index_2, site_pos, base_2)
 
@@ -219,12 +218,17 @@ def rc_align(align):
 def find_prem_stop(cds_align):
     """Detect if there is a premature stop codon in a cds alignment"""
 
-    for codon in egglib.tools.iter_stops(cds_align):  # check for premature stop codons
-        if codon[1] < cds_align.ls - 3:
+    if egglib.tools.has_stop(cds_align):
+        return True
+    else:
+        return False
 
-            return True
-        else:
-            return False
+    # for codon in egglib.tools.iter_stops(cds_align):  # check for premature stop codons
+    #     if codon[1] < cds_align.ls - 3:
+    #
+    #         return True
+    #     else:
+    #         return False
 
 
 def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict, filtered=True):
@@ -356,11 +360,17 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
             cds_align = rc_align(cds_align)
             cds_pos_list.reverse()
 
-        if find_prem_stop(cds_align) or cds_align.ls % 3 != 0:
-            print('premature stop detected in or CDS not a multiple of 3 ', 'gene:', gene_id, 'transcript:', transcript)
+        cds_align_nostop = cds_align.extract(0, cds_align.ls - 3) # drop the stop codon at the end
+
+        if find_prem_stop(cds_align_nostop):
+            print('Premature stop detected in CDS ', 'gene:', gene_id, 'transcript:', transcript)
+            #cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
+            continue
+        elif cds_align.ls % 3 != 0:
+            print('CDS not a multiple of 3 ', 'gene:', gene_id, 'transcript:', transcript)
+            #cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
             continue
         else:
-            cds_align_nostop = cds_align.extract(0, cds_align.ls - 3)  # drop the stop codon at the end
             gene_cds_aligns.append((cds_align_nostop, cds_pos_list[0:-3]))
         # cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
 
@@ -395,16 +405,13 @@ def extract_degenerate_sites(cds, codon_degen_dict):
     genome_pos = cds[0][1]
     start = 0
     for codon_aln in transcript_cds_aln.slider(3, 3):  # take codon by codon
-        snps_per_codon = 0
-        for site in range(codon_aln.ls): # check to exclude codons with more than one snp and any codon with missing data
-            col = codon_aln.column(site, outgroup=False)
-            if 'N' in map(chr, col):
-                break
-            else:
-                if len(set(map(chr, col))) > 1:
-                    snps_per_codon += 1
+        codon_pol = calc_polystats(codon_aln)
+        if codon_pol['S'] > 1:  # exclude codons with more than one snp
+            start += 3
+            continue
 
-        if snps_per_codon > 1:
+        if codon_pol['ls'] < 3:  # exclude any codon with missing data
+            start += 3
             continue
 
         pos = genome_pos[start:start + 3]
@@ -412,15 +419,15 @@ def extract_degenerate_sites(cds, codon_degen_dict):
         for sample in codon_aln:  # loop over samples
             codon_seq = sample.sequence.str()
             for i in range(3):
-                try:
-                    sites[i].append(codon_degen_dict[codon_seq][i])
-                except KeyError:
-                    sites[i].append('N')
+                # try:
+                sites[i].append(codon_degen_dict[codon_seq][i])
+                # except KeyError:
+                #     sites[i].append('N')
 
-        # print(pos, sites)
+        #print(pos, sites)
 
         for j in range(3):
-            if len(set(sites[j])) == 1:  # site is not completely 4-fold, 2-fold or 0-fold degenerate across samples
+            if len(set(sites[j])) == 1:  # Check that site is completely 4-fold, 2-fold or 0-fold degenerate across samples
                 if sites[j][0] == 0:
                     zerofold_pos_list.append(pos[j])
                 elif sites[j][0] == 4:
@@ -578,7 +585,8 @@ def main():
     gff_str = ''
     with gzip.open(gff_file, 'r') as gff_infile:
         for line in gff_infile:
-            if line.startswith(args.chrom):
+            gff_col = line.split('\t')
+            if gff_col[0] == args.chrom:
                 gff_str += line
 
     if os.path.isfile(gff_file[0:-6] + args.chrom + '.' + 'db'):
