@@ -570,6 +570,27 @@ def calc_sfs(aln):
     return sfs_folded
 
 
+def extract_ww_ss(aln):
+    site_indices = []
+    for site_index in range(aln.ls):
+        col = aln.column(site_index,ingroup=True, outgroup=False)
+        if len(set(map(chr, col))) == 1:
+            site_indices.append(site_index)
+        else:
+            alleles = list(set(map(chr, col)))
+            if alleles[0] == 'A' or alleles[0] == 'T':
+                if alleles[1] == 'A' or alleles[1] == 'T':
+                    site_indices.append(site_index)
+            elif alleles[0] == 'G' or alleles[0] == 'C':
+                if alleles[1] == 'G' or alleles[1] == 'C':
+                    site_indices.append(site_index)
+
+    ww_ss_aln = aln.extract(site_indices)
+
+    return ww_ss_aln
+
+
+
 def main():
 
     parser = argparse.ArgumentParser(description="Program to calculate population genetic statistics from coding "
@@ -663,11 +684,19 @@ def main():
         if args.method == 1:
             print('gene', 'gene_id', 'transcript', 'chr', 'start', 'end', 'fourfold_sites', 'fourfold_S', 'theta4',
                   'pi4', 'TajD4', 'delta_pi4', 'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0',
-                  'theta0_theta4', 'pi0_pi4', 'fourfold_sfs', 'zerofold_sfs', sep='\t', file=outfile)
+                  'theta0_theta4', 'pi0_pi4', 'fourfold_sfs', 'zerofold_sfs', 'fourfold_sites_ww_ss', 'fourfold_S_ww_ss'
+                  , 'theta4_ww_ss', 'pi4_ww_ss', 'TajD4_ww_ss', 'delta_pi4_ww_ss', 'zerofold_sites_ww_ss',
+                  'zerofold_S_ww_ss', 'theta0_ww_ss', 'pi0_ww_ss', 'TajD0_ww_ss', 'delta_pi0_ww_ss',
+                  'theta0_theta4_ww_ss', 'pi0_pi4_ww_ss', 'fourfold_sfs_ww_ss', 'zerofold_sfs_ww_ss', sep='\t',
+                  file=outfile)
         elif args.method == 2:
             print('gene', 'gene_id', 'transcript', 'chr', 'start', 'end', 'fourfold_sites', 'fourfold_S', 'theta4',
                   'pi4', 'TajD4', 'delta_pi4', 'zerofold_sites', 'zerofold_S', 'theta0', 'pi0', 'TajD0', 'delta_pi0',
-                  'theta0_theta4', 'pi0_pi4', 'fourfold_sfs', 'zerofold_sfs', 'ortholog_num',  sep='\t', file=outfile)
+                  'theta0_theta4', 'pi0_pi4', 'fourfold_sfs', 'zerofold_sfs', 'fourfold_sites_ww_ss', 'fourfold_S_ww_ss'
+                  , 'theta4_ww_ss', 'pi4_ww_ss', 'TajD4_ww_ss', 'delta_pi4_ww_ss', 'zerofold_sites_ww_ss',
+                  'zerofold_S_ww_ss', 'theta0_ww_ss', 'pi0_ww_ss', 'TajD0_ww_ss', 'delta_pi0_ww_ss',
+                  'theta0_theta4_ww_ss', 'pi0_pi4_ww_ss', 'fourfold_sfs_ww_ss', 'zerofold_sfs_ww_ss', 'ortholog_num',
+                  sep='\t', file=outfile)
 
         genes_processed = 0
         for gene_cds in cds_coords_dict:
@@ -754,6 +783,39 @@ def main():
             else:
                 theta0_theta4 = theta0 / theta4
 
+            # WW and SS stats
+
+            fourfold_ww_ss_aln = extract_ww_ss(alns[0])
+            zerofold_ww_ss_aln = extract_ww_ss(alns[1])
+
+            fourfold_polystats_ww_ss = calc_polystats(fourfold_ww_ss_aln)
+            zerofold_polystats_ww_ss = calc_polystats(zerofold_ww_ss_aln)
+
+            fourfold_sfs_ww_ss_str = ','.join(str(s) for s in calc_sfs(fourfold_ww_ss_aln))
+            zerofold_sfs_ww_ss_str = ','.join(str(s) for s in calc_sfs(zerofold_ww_ss_aln))
+
+            if fourfold_polystats_ww_ss['D'] is None:
+                fourfold_polystats_ww_ss['D'] = 'NA'
+
+            if zerofold_polystats_ww_ss['D'] is None:
+                zerofold_polystats_ww_ss['D'] = 'NA'
+
+            pi4_ww_ss = fourfold_polystats_ww_ss['Pi'] / float(fourfold_polystats_ww_ss['ls'])
+            pi0_ww_ss = zerofold_polystats_ww_ss['Pi'] / float(zerofold_polystats_ww_ss['ls'])
+
+            if pi4_ww_ss == 0.0:
+                pi0_pi4_ww_ss = 'NA'
+            else:
+                pi0_pi4_ww_ss = pi0_ww_ss / pi4_ww_ss
+
+            theta4_ww_ss = fourfold_polystats_ww_ss['thetaW'] / float(fourfold_polystats_ww_ss['ls'])
+            theta0_ww_ss = zerofold_polystats_ww_ss['thetaW'] / float(zerofold_polystats_ww_ss['ls'])
+
+            if theta4_ww_ss == 0.0:
+                theta0_theta4_ww_ss = 'NA'
+            else:
+                theta0_theta4_ww_ss = theta0_ww_ss / theta4_ww_ss
+
             gene_feat = gff_db[gene_cds]
             chrom = gene_feat.seqid
             start = gene_feat.start
@@ -764,13 +826,22 @@ def main():
                       fourfold_polystats['ls'], fourfold_polystats['S'], theta4, pi4, fourfold_polystats['D'],
                       fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'], theta0,
                       pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'], theta0_theta4, pi0_pi4,
-                      fourfold_sfs_str, zerofold_sfs_str, sep='\t', file=outfile)
+                      fourfold_sfs_str, zerofold_sfs_str, fourfold_polystats_ww_ss['ls'], fourfold_polystats_ww_ss['S'],
+                      theta4_ww_ss, pi4_ww_ss, fourfold_polystats_ww_ss['D'], fourfold_polystats_ww_ss['delta_pi'],
+                      zerofold_polystats_ww_ss['ls'], zerofold_polystats_ww_ss['S'], theta0_ww_ss, pi0_ww_ss,
+                      zerofold_polystats_ww_ss['D'], zerofold_polystats_ww_ss['delta_pi'], theta0_theta4_ww_ss,
+                      pi0_pi4_ww_ss, fourfold_sfs_ww_ss_str, zerofold_sfs_ww_ss_str, sep='\t', file=outfile)
             elif args.method == 2:
                 print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end,
                       fourfold_polystats['ls'], fourfold_polystats['S'], theta4, pi4, fourfold_polystats['D'],
-                      fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'],
-                      theta0, pi0, zerofold_polystats['D'], zerofold_polystats['delta_pi'], theta0_theta4,
-                      pi0_pi4, fourfold_sfs_str, zerofold_sfs_str, ortholog_num, sep='\t', file=outfile)
+                      fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'], theta0,
+                      pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'], theta0_theta4, pi0_pi4,
+                      fourfold_sfs_str, zerofold_sfs_str, fourfold_polystats_ww_ss['ls'], fourfold_polystats_ww_ss['S'],
+                      theta4_ww_ss, pi4_ww_ss, fourfold_polystats_ww_ss['D'], fourfold_polystats_ww_ss['delta_pi'],
+                      zerofold_polystats_ww_ss['ls'], zerofold_polystats_ww_ss['S'], theta0_ww_ss, pi0_ww_ss,
+                      zerofold_polystats_ww_ss['D'], zerofold_polystats_ww_ss['delta_pi'], theta0_theta4_ww_ss,
+                      pi0_pi4_ww_ss, fourfold_sfs_ww_ss_str, zerofold_sfs_ww_ss_str, ortholog_num, sep='\t',
+                      file=outfile)
 
     print("Total Protein coding Genes processed", genes_processed)
 
