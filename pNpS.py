@@ -168,11 +168,11 @@ def extract_gene(vcf, gff, gene_name):
     end = gene_feat.end
     chrom = gene_feat.seqid
 
-    try:
-        return vcf.fetch(chrom, start, end)
+    # try:
+    return vcf.fetch(chrom, start, end)
 
-    except ValueError:
-        return None
+    # except ValueError:
+    #     return None
 
 
 def call_to_bases(vcf_site, site_pos, align, sample_list):
@@ -292,9 +292,6 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
 
     gene_region = extract_gene(vcf, gff, gene_id)
 
-    # if gene_region is None:  # deal with CDS on scaffolds which are returned as None
-    #     continue
-
     for site in gene_region:
 
         if site.POS not in cds_pos_list:  # only extract genic sites in CDS blocks
@@ -392,23 +389,7 @@ def extract_cds_align(vcf, min_dp, max_dp, sample_list, gff, gene_id,  cds_dict,
 
     cds_align_nostop = cds_align.extract(0, cds_align.ls - 3)  # drop the stop codon at the end
 
-    # if find_prem_stop(cds_align_nostop):
-    #     print('Premature stop detected in CDS ', 'gene:', gene_id, 'transcript:', transcript)
-    #     #cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
-    #     continue
-    # elif cds_align.ls % 3 != 0:
-    #     print('CDS not a multiple of 3 ', 'gene:', gene_id, 'transcript:', transcript)
-    #     #cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
-    #     continue
-    # else:
-
     gene_cds_aligns.append((cds_align_nostop, cds_pos_list[0:-3]))
-    # cds_align.to_fasta(gene_id + '_' + transcript + '.fas')
-
-    # if len(gene_cds_aligns) == 0:
-    #     return None
-    # else:
-    #     return gene_cds_aligns
 
     return cds_align_nostop, cds_pos_list[0:-3]
 
@@ -571,7 +552,7 @@ def calc_delta_pi(pol_stats, n):
 
 def calc_sfs(aln):
 
-    """ Calculated the folded sfs for an alignment
+    """ Calculates the folded sfs for an alignment
 
     The sfs is returned as a list and also contains the counts of monomorphic
     sites as the first element"""
