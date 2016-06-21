@@ -253,7 +253,7 @@ def check_cds_incomplete(cds_ref_seq, gene_id, tran_id):
 
     cds_seq = egglib.SequenceView(cds_ref_seq, 0, outgroup=False).str()
 
-    if cds_seq[0:3] != 'ATG' or cds_seq[-3:] not in stop_list:
+    if cds_seq[0:3].upper() != 'ATG' or cds_seq[-3:].upper() not in stop_list:
         print('No start, or no stop, codon detected gene: %s transcript: %s' % (gene_id, tran_id))
         return True
     else:
@@ -573,7 +573,7 @@ def calc_sfs(aln):
 def extract_ww_ss(aln):
     site_indices = []
     for site_index in range(aln.ls):
-        col = aln.column(site_index,ingroup=True, outgroup=False)
+        col = aln.column(site_index, ingroup=True, outgroup=False)
         if len(set(map(chr, col))) == 1:
             site_indices.append(site_index)
         else:
@@ -588,7 +588,6 @@ def extract_ww_ss(aln):
     ww_ss_aln = aln.extract(site_indices)
 
     return ww_ss_aln
-
 
 
 def main():
@@ -616,14 +615,20 @@ def main():
     parser.add_argument('-s', '--species', dest='species', type=int, help="Specify the column number for the"
                                                                           "species identifier in the ortholog list file"
                                                                           "Required when -m 2 option is used")
+    parser.add_argument('-O', '--outgroup', dest='outgroup', type=int, help="Specify the column number for the"
+                                                                          "outgroup species in the ortholog list file"
+                                                                          "Required when -m 2 option is used")
 
     args = parser.parse_args()
 
-    if args.method == 3 and args.orthologs is None:
+    if args.method == 2 and args.orthologs is None:
         sys.exit("\nNeed to specify an ortholog list file with -f option\n")
 
-    if args.method == 3 and args.species is None:
+    if args.method == 2 and args.species is None:
         sys.exit("\nSpecify the column number for the species identifier in the ortholog list file\n")
+
+    if args.method == 2 and args.outgroup is None:
+        sys.exit("\nSpecify the column number for the outgroup species in the ortholog list file\n")
 
     vcf_file = cyvcf.Reader(filename=args.vcf)
 
@@ -670,13 +675,17 @@ def main():
         species_col_num = args.species - 1
         with open(args.orthologs) as infile:
             ortholog_list_dict = {}
-            ortholog_num_dict = {}
+            # ortholog_num_dict = {}
+            out_ortho_dict = {}
             for line in infile:
                 col = line.rstrip().split(' ')
                 ortholog = col[species_col_num:species_col_num + 3]
                 ortholog_list_dict[ortholog[2].split('=')[1]] = ortholog[1]
+                # ortholog_num_dict[ortholog[2].split('=')[1]] = col[-1]
 
-                ortholog_num_dict[ortholog[2].split('=')[1]] = col[-1]
+                outgroup_col_num = args.outgroup - 1
+                outgroup_ortholog = col[outgroup_col_num:outgroup_col_num+ 3]
+                out_ortho_dict[ortholog[2].split('=')[1]] =  outgroup_ortholog[2].split('=')[1]
 
         ortho_trans_dict = choose_transcripts_from_list(cds_coords_dict, ortholog_list_dict)
 
@@ -695,7 +704,7 @@ def main():
                   'theta0_theta4', 'pi0_pi4', 'fourfold_sfs', 'zerofold_sfs', 'fourfold_sites_ww_ss', 'fourfold_S_ww_ss'
                   , 'theta4_ww_ss', 'pi4_ww_ss', 'TajD4_ww_ss', 'delta_pi4_ww_ss', 'zerofold_sites_ww_ss',
                   'zerofold_S_ww_ss', 'theta0_ww_ss', 'pi0_ww_ss', 'TajD0_ww_ss', 'delta_pi0_ww_ss',
-                  'theta0_theta4_ww_ss', 'pi0_pi4_ww_ss', 'fourfold_sfs_ww_ss', 'zerofold_sfs_ww_ss', 'ortholog_num',
+                  'theta0_theta4_ww_ss', 'pi0_pi4_ww_ss', 'fourfold_sfs_ww_ss', 'zerofold_sfs_ww_ss', 'chicken_id',
                   sep='\t', file=outfile)
 
         genes_processed = 0
@@ -709,10 +718,10 @@ def main():
                 cds_ref_seq = extract_ref_cds(chrom_seq, longest_trans_dict[
                     gene_cds][transcript])
 
-                if check_cds_incomplete(cds_ref_seq, gene_cds,
-                                        transcript):  # check CDS has valid start codon and stop codon
-                    # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
-                    continue
+                # if check_cds_incomplete(cds_ref_seq, gene_cds,
+                #                         transcript):  # check CDS has valid start codon and stop codon
+                #     #cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
+                #     continue
 
                 if find_prem_stop(cds_ref_seq, gene_cds, transcript):  # check for premature stop
                     # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
@@ -725,16 +734,24 @@ def main():
 
             elif args.method == 2:
 
+                # print(gene_cds)
+
                 if gene_cds not in ortho_trans_dict.keys():
                     # print("%s not in otholog list" % gene_cds)
                     continue
 
                 transcript = ortho_trans_dict[gene_cds].keys()[0]
-                cds_ref_seq = extract_ref_cds(chrom_seq, transcript)
 
-                if check_cds_incomplete(cds_ref_seq, gene_cds, transcript):
-                    # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
-                    continue
+                cds_ref_seq = extract_ref_cds(chrom_seq, ortho_trans_dict[
+                    gene_cds][transcript])
+
+                # print(gene_cds, transcript)
+                #
+                # print(egglib.SequenceView(cds_ref_seq, 0, outgroup=False).str())
+
+                # if check_cds_incomplete(cds_ref_seq, gene_cds, transcript):
+                #     # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
+                #     continue
 
                 if find_prem_stop(cds_ref_seq, gene_cds, transcript):
                     # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
@@ -743,8 +760,8 @@ def main():
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              ortho_trans_dict)
 
-                gene_id = ortho_trans_dict[gene_cds][transcript][-1]
-                ortholog_num = ortholog_num_dict[gene_id]
+                # gene_id = ortho_trans_dict[gene_cds][transcript][-1]
+                # ortholog_num = ortholog_num_dict[gene_id]
 
             else:
                 sys.exit("Need to specify -m 1 or -m 2")
@@ -822,6 +839,7 @@ def main():
             end = gene_feat.end
 
             if args.method == 1:
+
                 print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end,
                       fourfold_polystats['ls'], fourfold_polystats['S'], theta4, pi4, fourfold_polystats['D'],
                       fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'], theta0,
@@ -831,8 +849,13 @@ def main():
                       zerofold_polystats_ww_ss['ls'], zerofold_polystats_ww_ss['S'], theta0_ww_ss, pi0_ww_ss,
                       zerofold_polystats_ww_ss['D'], zerofold_polystats_ww_ss['delta_pi'], theta0_theta4_ww_ss,
                       pi0_pi4_ww_ss, fourfold_sfs_ww_ss_str, zerofold_sfs_ww_ss_str, sep='\t', file=outfile)
+
             elif args.method == 2:
-                print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end,
+
+                gene_id = cds_coords_dict[gene_cds][transcript][-1]
+                outgroup_id = out_ortho_dict[gene_id]
+
+                print(gene_cds, gene_id, transcript, chrom, start, end,
                       fourfold_polystats['ls'], fourfold_polystats['S'], theta4, pi4, fourfold_polystats['D'],
                       fourfold_polystats['delta_pi'], zerofold_polystats['ls'], zerofold_polystats['S'], theta0,
                       pi0, zerofold_polystats['D'],  zerofold_polystats['delta_pi'], theta0_theta4, pi0_pi4,
@@ -840,7 +863,7 @@ def main():
                       theta4_ww_ss, pi4_ww_ss, fourfold_polystats_ww_ss['D'], fourfold_polystats_ww_ss['delta_pi'],
                       zerofold_polystats_ww_ss['ls'], zerofold_polystats_ww_ss['S'], theta0_ww_ss, pi0_ww_ss,
                       zerofold_polystats_ww_ss['D'], zerofold_polystats_ww_ss['delta_pi'], theta0_theta4_ww_ss,
-                      pi0_pi4_ww_ss, fourfold_sfs_ww_ss_str, zerofold_sfs_ww_ss_str, ortholog_num, sep='\t',
+                      pi0_pi4_ww_ss, fourfold_sfs_ww_ss_str, zerofold_sfs_ww_ss_str, outgroup_id, sep='\t',
                       file=outfile)
 
     print("Total Protein coding Genes processed", genes_processed)
