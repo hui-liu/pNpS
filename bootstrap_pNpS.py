@@ -19,14 +19,18 @@ def bootstrap(data1, num_samples, stat, alpha, data2=None):
     if data2 is not None:
         data2_array = np.array(data2)
         samples2 = data2_array[idx]
+
         stat2 = np.sort(stat(samples2, 1))
 
         ratio = stat1 / stat2
+        ratio_sorted = np.sort(ratio)
 
-        conf_int_stat2 = (round(stat2[int((alpha/2.0)*num_samples)], 6), round(stat2[int((1-alpha/2.0)*num_samples)],
-                                                                               6))
-        conf_int_ratio = (round(ratio[int((alpha/2.0)*num_samples)], 6), round(ratio[int((1-alpha/2.0)*num_samples)],
-                                                                               6))
+        conf_int_stat2 = (round(stat2[int((alpha / 2.0) * num_samples)], 6), round(stat2[int((1 - alpha / 2.0)
+                                                                                             * num_samples)]), 6)
+
+        conf_int_ratio = (round(ratio_sorted[int((alpha / 2.0) * num_samples)], 6), round(ratio_sorted[int((1 - alpha / 2.0)
+                                                                                           * num_samples)]), 6)
+
         return conf_int_stat1, conf_int_stat2, conf_int_ratio
 
     else:
