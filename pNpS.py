@@ -752,8 +752,6 @@ def main():
 
             elif args.method == 2:
 
-                # print(gene_cds)
-
                 if gene_cds not in ortho_trans_dict.keys():
                     # print("%s not in otholog list" % gene_cds)
                     continue
@@ -764,7 +762,6 @@ def main():
                     gene_cds][transcript])
 
                 if find_prem_stop(cds_ref_seq, gene_cds, transcript):
-                    # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
                     continue
 
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
@@ -773,7 +770,12 @@ def main():
             else:
                 sys.exit("Need to specify -m 1 or -m 2")
 
-            alns = extract_degenerate_sites(cds_alns, codon_degen_dict, args.cpg_filter)
+            if args.cpg_filter:
+                cpg_filter = True
+            else:
+                cpg_filter = False
+
+            alns = extract_degenerate_sites(cds_alns, codon_degen_dict, cpg_filter)
 
             fourfold_polystats = calc_polystats(alns[0])
             zerofold_polystats = calc_polystats(alns[1])
