@@ -8,7 +8,6 @@ import numpy as np
 import argparse
 import gzip
 
-
 STANDARD_CODON_TABLE = {
     "TTT": "F", "CTT": "L", "ATT": "I", "GTT": "V",
     "TTC": "F", "CTC": "L", "ATC": "I", "GTC": "V",
@@ -401,14 +400,14 @@ def max_dict_val(d):
     return k[v.index(max(v))]
 
 
-def extract_degenerate_sites(cds, codon_degen_dict):
+def extract_degenerate_sites(cds, codon_degen_dict, cpg_filter):
 
     """ Identifies the 0-fold and 4-fold sites in a codon alignment
     and returns the list of site positions in the alignment when considering
     all transcripts for a gene (works also for genes with a single transcript).
 
-    The first parameter aln_list is a list of Align instances, each item being the
-    CDS region for each transript at a gene that has more.
+    The first parameter cds is a list containinng the CDS align as the first item
+    and a list of physical positions of each site in the CDS as the second item in the CDS align.
 
      :return an Align instance containing 4-fold and an instance containing 0-fold site positions at a gene"""
 
@@ -430,18 +429,21 @@ def extract_degenerate_sites(cds, codon_degen_dict):
 
         pos = genome_pos[start:start + 3]
         sites = {0: [], 1: [], 2: []}
-        for sample in codon_aln:  # loop over samples
-            codon_seq = sample.sequence.str()
-            for i in range(3):
-                # try:
-                sites[i].append(codon_degen_dict[codon_seq][i])
-                # except KeyError:
-                #     sites[i].append('N')
 
-        #print(pos, sites)
+        if codon_pol['S'] == 0:  # No need to loop through samples when no Segregating site in the codon
+            codon_seq = codon_aln[0].sequence.str()
+            for i in range(3):
+                sites[i].append(codon_degen_dict[codon_seq][i])
+        else:
+            for sample in codon_aln:  # loop over samples
+                codon_seq = sample.sequence.str()
+                for i in range(3):
+                    sites[i].append(codon_degen_dict[codon_seq][i])
+
+        # print(pos, sites)
 
         for j in range(3):
-            if len(set(sites[j])) == 1:  # Check that site is completely 4-fold, 2-fold or 0-fold degenerate across samples
+            if len(set(sites[j])) == 1:  # Check that site is completely 4-fold or 0-fold degenerate across samples
                 if sites[j][0] == 0:
                     zerofold_pos_list.append(pos[j])
                 elif sites[j][0] == 4:
@@ -454,9 +456,16 @@ def extract_degenerate_sites(cds, codon_degen_dict):
         start += 3
 
     fourfold_sites_to_extract_index = [cds[1].index(i) for i in fourfold_pos_list]
-    four_fold_align = cds[0].extract(fourfold_sites_to_extract_index)
-
     zerofold_sites_to_extract_index = [cds[1].index(i) for i in zerofold_pos_list]
+
+    if cpg_filter is True:  # intersect the cpg prone site indices with degenerate site indices
+        non_cpg_site_list = extract_non_cpg_prone(cds[0])
+        fourfold_sites_to_extract_index = list(set(fourfold_sites_to_extract_index
+                                                   ).intersection(set(non_cpg_site_list)))
+        zerofold_sites_to_extract_index = list(set(zerofold_sites_to_extract_index
+                                                   ).intersection(set(non_cpg_site_list)))
+
+    four_fold_align = cds[0].extract(fourfold_sites_to_extract_index)
     zero_fold_align = cds[0].extract(zerofold_sites_to_extract_index)
 
     return four_fold_align, zero_fold_align
@@ -590,12 +599,28 @@ def extract_ww_ss(aln):
     return ww_ss_aln
 
 
+def extract_non_cpg_prone(aln):
+
+    """Extract the positions of non-CpG prone sites which are defined as sites not
+    preceded by a C or follwoded by a G in any sample"""
+
+    non_cpg_indices = []
+    for site in range(1, aln.ls - 1):
+        before_alleles = [chr(i) for i in aln.column(site - 1, outgroup=False)[:]]
+        after_alleles = [chr(i) for i in aln.column(site + 1, outgroup=False)[:]]
+
+        if 'C' not in before_alleles and 'G' not in after_alleles:
+            non_cpg_indices.append(site)
+
+    return non_cpg_indices
+
+
 def main():
 
     parser = argparse.ArgumentParser(description="Program to calculate population genetic statistics from coding "
                                                  "regions in a VCF file")
     parser.add_argument('-i', '--in', dest='vcf', required=True, help="All-sites VCF file produced by GATK "
-                                                                      "GenotypeGVCF")
+                                                                      "GenotypeGVCF (must be compressed and indexed)")
     parser.add_argument('-g', '--gff', dest='gff', help="Reference genome annotation file in GFF3 format")
     parser.add_argument('-t', '--type_gff', dest='type', help="Specify whether GFF is Ensembl or NCBI")
     parser.add_argument('-r', '--ref_genome', dest='ref_genome', help="Reference Genome in fasta format")
@@ -610,14 +635,15 @@ def main():
                         help="Choice of transcript for degenerate sites:"
                              "( 1.) Longest transcript (-m 1)."
                              "( 2.) Choose transcript from the an ortholog list file specified")
-    parser.add_argument('-f', '--ortholog_file', dest='orthologs', type=str, help="Tabe delimited list of orthologs "
+    parser.add_argument('-f', '--ortholog_file', dest='orthologs', type=str, help="Tab delimited list of orthologs "
                                                                                   "between species")
     parser.add_argument('-s', '--species', dest='species', type=int, help="Specify the column number for the"
                                                                           "species identifier in the ortholog list file"
-                                                                          "Required when -m 2 option is used")
-    parser.add_argument('-O', '--outgroup', dest='outgroup', type=int, help="Specify the column number for the"
-                                                                          "outgroup species in the ortholog list file"
-                                                                          "Required when -m 2 option is used")
+                                                                          ". Required when -m 2 option is used")
+    parser.add_argument('-O', '--outgroup', dest='outgroup', type=int, help="Specify the column number for the outgroup"
+                                                                            "species in the ortholog list file."
+                                                                            " Required when -m 2 option is used")
+    parser.add_argument('--filter_cpg', dest='cpg_filter', action='store_true', help="Filter out CpG prone sites")
 
     args = parser.parse_args()
 
@@ -684,8 +710,8 @@ def main():
                 # ortholog_num_dict[ortholog[2].split('=')[1]] = col[-1]
 
                 outgroup_col_num = args.outgroup - 1
-                outgroup_ortholog = col[outgroup_col_num:outgroup_col_num+ 3]
-                out_ortho_dict[ortholog[2].split('=')[1]] =  outgroup_ortholog[2].split('=')[1]
+                outgroup_ortholog = col[outgroup_col_num:outgroup_col_num + 3]
+                out_ortho_dict[ortholog[2].split('=')[1]] = outgroup_ortholog[2].split('=')[1]
 
         ortho_trans_dict = choose_transcripts_from_list(cds_coords_dict, ortholog_list_dict)
 
@@ -718,19 +744,11 @@ def main():
                 cds_ref_seq = extract_ref_cds(chrom_seq, longest_trans_dict[
                     gene_cds][transcript])
 
-                # if check_cds_incomplete(cds_ref_seq, gene_cds,
-                #                         transcript):  # check CDS has valid start codon and stop codon
-                #     #cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
-                #     continue
-
                 if find_prem_stop(cds_ref_seq, gene_cds, transcript):  # check for premature stop
-                    # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
                     continue
 
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              longest_trans_dict)
-
-                # cds_alns[0].to_fasta('%s_%s.fas' % (gene_cds, transcript))
 
             elif args.method == 2:
 
@@ -745,14 +763,6 @@ def main():
                 cds_ref_seq = extract_ref_cds(chrom_seq, ortho_trans_dict[
                     gene_cds][transcript])
 
-                # print(gene_cds, transcript)
-                #
-                # print(egglib.SequenceView(cds_ref_seq, 0, outgroup=False).str())
-
-                # if check_cds_incomplete(cds_ref_seq, gene_cds, transcript):
-                #     # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
-                #     continue
-
                 if find_prem_stop(cds_ref_seq, gene_cds, transcript):
                     # cds_ref_seq.to_fasta('%s_%s.fas' % (gene_cds, transcript))
                     continue
@@ -760,13 +770,10 @@ def main():
                 cds_alns = extract_cds_align(vcf_file, min_depth, max_depth, samples, gff_db, gene_cds,
                                              ortho_trans_dict)
 
-                # gene_id = ortho_trans_dict[gene_cds][transcript][-1]
-                # ortholog_num = ortholog_num_dict[gene_id]
-
             else:
                 sys.exit("Need to specify -m 1 or -m 2")
 
-            alns = extract_degenerate_sites(cds_alns, codon_degen_dict)
+            alns = extract_degenerate_sites(cds_alns, codon_degen_dict, args.cpg_filter)
 
             fourfold_polystats = calc_polystats(alns[0])
             zerofold_polystats = calc_polystats(alns[1])
