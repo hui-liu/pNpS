@@ -602,7 +602,7 @@ def extract_ww_ss(aln):
 def extract_non_cpg_prone(aln):
 
     """Extract the positions of non-CpG prone sites which are defined as sites not
-    preceded by a C or follwoded by a G in any sample"""
+    preceded by a C or followed by a G in any sample"""
 
     non_cpg_indices = []
     for site in range(1, aln.ls - 1):
