@@ -468,7 +468,7 @@ def extract_degenerate_sites(cds, codon_degen_dict, cpg_filter):
     four_fold_align = cds[0].extract(fourfold_sites_to_extract_index)
     zero_fold_align = cds[0].extract(zerofold_sites_to_extract_index)
 
-    return four_fold_align, zero_fold_align
+    return four_fold_align, zero_fold_align, fourfold_pos_list, zerofold_pos_list
 
 
 def find_longest_transcript(cds_coord, db):
@@ -644,6 +644,8 @@ def main():
                                                                             "species in the ortholog list file."
                                                                             " Required when -m 2 option is used")
     parser.add_argument('--filter_cpg', dest='cpg_filter', action='store_true', help="Filter out CpG prone sites")
+    parser.add_argument('--print_bed', dest='bed_out', type=str, help="Print a bed file of 0-fold and 4-fold"
+                                                                                  " sites")
 
     args = parser.parse_args()
 
@@ -733,6 +735,9 @@ def main():
                   'theta0_theta4_ww_ss', 'pi0_pi4_ww_ss', 'fourfold_sfs_ww_ss', 'zerofold_sfs_ww_ss', 'chicken_id',
                   sep='\t', file=outfile)
 
+        if args.bed_out:
+            bed_out = open(args.bed_out, 'w')
+
         genes_processed = 0
         for gene_cds in cds_coords_dict:
             genes_processed += 1
@@ -775,7 +780,21 @@ def main():
             else:
                 cpg_filter = False
 
+            gene_feat = gff_db[gene_cds]
+            chrom = gene_feat.seqid
+            start = gene_feat.start
+            end = gene_feat.end
+
             alns = extract_degenerate_sites(cds_alns, codon_degen_dict, cpg_filter)
+
+            if args.bed_out:  # print site degenerate site positions to a bed file
+                fourfold_pos = alns[2]
+                zerofold_pos = alns[3]
+
+                for s in fourfold_pos:
+                    print(chrom, s - 1, s, '+', gene_cds, transcript, '4fd', sep='\t', file=bed_out)
+                for s in zerofold_pos:
+                    print(chrom, s - 1, s, '+', gene_cds, transcript, '0fd', sep='\t', file=bed_out)
 
             fourfold_polystats = calc_polystats(alns[0])
             zerofold_polystats = calc_polystats(alns[1])
@@ -842,11 +861,6 @@ def main():
             else:
                 theta0_theta4_ww_ss = theta0_ww_ss / theta4_ww_ss
 
-            gene_feat = gff_db[gene_cds]
-            chrom = gene_feat.seqid
-            start = gene_feat.start
-            end = gene_feat.end
-
             if args.method == 1:
 
                 print(gene_cds, cds_coords_dict[gene_cds][transcript][-1], transcript, chrom, start, end,
@@ -876,6 +890,9 @@ def main():
                       file=outfile)
 
     print("Total Protein coding Genes processed", genes_processed)
+
+    if args.bed_out:
+        bed_out.close()
 
 if __name__ == '__main__':
     main()
